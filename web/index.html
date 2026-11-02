@@ -1,0 +1,289 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Spin the Frames</title>
+  <meta name="description" content="A numerical audit of basis independence in DeltaConv's moving-least-squares gradient, with interactive figures computed live in the browser." />
+  <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+  <script>
+    try { const t = localStorage.getItem('theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+</head>
+<body>
+  <header class="hero" id="top">
+    <canvas class="hero-canvas" id="hero-canvas" aria-label="A sphere of 512 points. Each point carries a small tangent frame that keeps spinning, while the gradient arrows stay still."></canvas>
+    <div class="hero-text">
+      <h1>Spin the frames,<br />keep the gradient</h1>
+      <p class="hero-sub">A numerical audit of basis independence in DeltaConv’s moving-least-squares gradient.</p>
+    </div>
+    <div class="hero-panel" role="group" aria-label="Normalisation used by the hero figure">
+      <p class="hero-panel-label">Every frame is spinning. Gradient computed with</p>
+      <div class="seg" id="hero-toggle">
+        <button type="button" data-method="C_invariant" aria-pressed="true">invariant conventions</button>
+        <button type="button" data-method="A_upstream" aria-pressed="false">upstream conventions</button>
+      </div>
+      <p class="hero-readout">Change since the frames started spinning: <output id="hero-drift">—</output></p>
+    </div>
+  </header>
+
+  <div class="byline">
+    <div>
+      <span class="byline-k">Author</span>
+      <span>Nassim Arifette, PhD student at École polytechnique</span>
+    </div>
+    <div>
+      <span class="byline-k">Project</span>
+      <span>Master MVA, ENS Paris-Saclay</span>
+    </div>
+    <div>
+      <span class="byline-k">Studies</span>
+      <span><a href="https://doi.org/10.1145/3528223.3530166">Wiersma et al., DeltaConv, SIGGRAPH 2022</a></span>
+    </div>
+    <div>
+      <span class="byline-k">Material</span>
+      <span class="byline-links">
+        <a href="#reproduce">Code &amp; notebooks</a>
+        <a href="files/research_note_fr.md">Research note</a>
+        <a href="files/results.json">Raw results</a>
+      </span>
+    </div>
+    <button class="theme-toggle" id="theme-toggle" type="button" aria-label="Switch colour theme">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9Z" fill="currentColor"/></svg>
+    </button>
+  </div>
+
+  <main class="article">
+    <section class="tldr" aria-labelledby="tldr-h">
+      <h2 id="tldr-h">In short</h2>
+      <p>DeltaConv learns on point clouds with gradients that live in each point’s tangent plane. Its authors argue the result does not depend on which tangent basis you pick at each point, and the continuous maths agrees.</p>
+      <p>The discrete implementation makes two numerical choices, a ridge penalty and a gradient normaliser, that each quietly reintroduce the basis. Rotating every tangent frame moves the normalised gradient by <strong>2.08 % on average</strong>, and by up to <strong>10.2 %</strong>, over 72 synthetic conditions.</p>
+      <p>Two small changes bring that drift down to <strong>10<sup>−15</sup></strong>, which is floating-point noise. They do not make the gradient more accurate, and nothing on this page measures a trained network.</p>
+    </section>
+
+    <section aria-labelledby="s1">
+      <h2 id="s1">Directions on a surface need a frame</h2>
+      <p>DeltaConv <a class="cite" href="#ref-deltaconv">[1]</a> runs two streams of features side by side. A scalar stream stores one number per point and channel. A vector stream stores a direction per point and channel, and the network moves between them with geometric operators: gradient, divergence, curl. That is how it captures anisotropic patterns, like an edge or a ridge, without leaving the point cloud.</p>
+      <p>A direction in the tangent plane is stored as two numbers. Two numbers only mean something relative to a pair of axes, a <em>tangent basis</em> <span class="m">(u, v)</span>, and on a point cloud nothing singles out one basis over another. The implementation picks one per point by a fixed rule. Any rotation of those axes would have been just as legitimate.</p>
+      <aside class="note">Coordinate independence is section 3.7 of the paper. Rotating the axes by θ should rotate the two coefficients by −θ and leave the actual 3D arrow unchanged.</aside>
+      <p>The first quantity DeltaConv needs is the gradient of a scalar field. Below is the one used throughout this audit, <span class="m">f(x,y,z)=\sin 2x + yz/4</span>, sampled on 512 points. The arrows are estimated by the method described next; switch to the exact gradient to compare.</p>
+    </section>
+
+    <figure class="fig wide" id="fig-cloud">
+      <div class="fig-stage">
+        <canvas class="three" aria-label="Interactive 3D point cloud with gradient arrows. Drag to orbit."></canvas>
+        <div class="fig-hint">Drag to orbit, scroll or pinch to zoom</div>
+      </div>
+      <div class="fig-controls">
+        <label class="ctl">Surface
+          <select data-ctl="example"></select>
+        </label>
+        <div class="ctl">Arrows
+          <div class="seg" data-ctl="arrows">
+            <button type="button" data-value="estimate" aria-pressed="true">MLS estimate</button>
+            <button type="button" data-value="truth" aria-pressed="false">exact</button>
+          </div>
+        </div>
+        <div class="ctl">Colour
+          <div class="seg" data-ctl="colour">
+            <button type="button" data-value="field" aria-pressed="true">field value</button>
+            <button type="button" data-value="error" aria-pressed="false">error per point</button>
+          </div>
+        </div>
+      </div>
+      <figcaption><span class="fig-n">Figure 1.</span> <span data-caption>The scalar field and its gradient on one of the four saved audit clouds.</span> Estimates use the upstream method A, recomputed in your browser.</figcaption>
+    </figure>
+
+    <section aria-labelledby="s2">
+      <h2 id="s2">How the gradient is estimated</h2>
+      <p>DeltaConv estimates gradients with weighted moving least squares. For every point it takes its 20 nearest neighbours, including itself, writes their offsets in the local frame as <span class="m">(u_j, v_j)</span>, and fits a quadratic polynomial to the field values:</p>
+      <div class="mb">f(u,v) \approx c_0 + g_u\,u + g_v\,v + a\,u^2 + b\,uv + c\,v^2</div>
+      <p>The linear coefficients <span class="m">(g_u, g_v)</span> are the gradient in that frame. The fit minimises a Gaussian-weighted squared error. On thin or lopsided neighbourhoods the problem is badly conditioned, so the paper adds a small ridge term <a class="cite" href="#ref-deltaconv">[1, §3.2]</a>:</p>
+      <div class="mb">\min_{\theta}\; \sum_j w_j\,\big(f_j - B_j\theta\big)^2 + \lambda\,\theta^{\top} P\,\theta, \qquad \lambda = 10^{-3},\; P = I</div>
+      <p>The gradient is then rescaled by a single global number so that features stay in a reasonable range from one layer to the next. Both steps are sensible. Both, as it turns out, look at the coordinates.</p>
+    </section>
+
+    <section aria-labelledby="s3">
+      <h2 id="s3">Where the basis sneaks back in: the penalty</h2>
+      <p>Take the quadratic part <span class="m">a u^2 + b uv + c v^2</span>. It is a symmetric tensor in disguise:</p>
+      <div class="mb">H = \begin{pmatrix} a & b/2 \\ b/2 & c \end{pmatrix}, \qquad \|H\|_F^2 = a^2 + \tfrac{b^2}{2} + c^2</div>
+      <p>Rotating the frame turns <span class="m">H</span> into <span class="m">R^{\top} H R</span>. The Frobenius norm survives the rotation, but the identity penalty <span class="m">a^2+b^2+c^2</span> is not that norm. It counts the mixed term twice as heavily, so the same surface patch pays a different price depending on how the axes happen to sit. Turn the dial and watch.</p>
+    </section>
+
+    <figure class="fig wide" id="fig-penalty">
+      <div class="fig-split">
+        <svg class="fig-svg" data-role="patch" role="img" aria-label="Neighbourhood of one point in its tangent plane, with the tangent axes."></svg>
+        <div class="fig-side">
+          <svg class="fig-svg" data-role="curve" role="img" aria-label="Penalty values as a function of the frame angle."></svg>
+          <dl class="readout" data-role="readout"></dl>
+        </div>
+      </div>
+      <div class="fig-controls">
+        <label class="ctl ctl-range">Frame angle <output data-out="theta">0°</output>
+          <input type="range" min="0" max="360" step="0.5" value="0" data-ctl="theta" />
+        </label>
+        <button type="button" class="btn" data-ctl="play">Rotate</button>
+        <button type="button" class="btn ghost" data-ctl="next">Another point</button>
+      </div>
+      <figcaption><span class="fig-n">Figure 2.</span> Twenty real neighbours of one point of the saddle cloud, in its tangent plane. The quadratic is fitted without ridge, so its shape is fixed; only the axes turn. The upstream penalty <span class="swatch drift"></span> wobbles with the angle, the tensor penalty <span class="swatch stable"></span> does not.</figcaption>
+    </figure>
+
+    <section aria-labelledby="s3b">
+      <p>The fix changes one entry of the diagonal: <span class="m">P = \operatorname{diag}(1,1,1,1,\tfrac12,1)</span>, which penalises exactly <span class="m">\|H\|_F^2</span>. On its own this already makes the <em>raw</em> gradient basis-independent to machine precision in every one of the 72 conditions.</p>
+      <aside class="note">The constant term is still regularised, so the gradient of a constant signal is not exactly zero at λ &gt; 0. Polynomial reproduction is tested separately at λ = 0.</aside>
+    </section>
+
+    <section aria-labelledby="s4">
+      <h2 id="s4">Where the basis sneaks back in: the normaliser</h2>
+      <p>For each point the MLS fit produces a stencil: one small 2D vector <span class="m">g_{ij}</span> per neighbour, telling how much neighbour <span class="m">j</span> contributes to the gradient. To normalise, the upstream code sums the absolute values of each component separately, then takes a norm:</p>
+      <div class="mb">s_{\text{upstream}} = \max_i \Big\| \Big(\textstyle\sum_j |g_{ij}^{u}|,\; \sum_j |g_{ij}^{v}|\Big) \Big\|_2 \qquad s_{\text{invariant}} = \max_i \textstyle\sum_j \|g_{ij}\|_2</div>
+      <p>Absolute values per axis are an L1 measurement, and L1 depends on the axes. The same arrows measure longer when they sit diagonally. The invariant bound only adds arrow lengths, which no rotation can change.</p>
+    </section>
+
+    <figure class="fig wide" id="fig-norm">
+      <div class="fig-split">
+        <svg class="fig-svg" data-role="stencil" role="img" aria-label="The 20 stencil vectors of one point, with their per-axis sums."></svg>
+        <div class="fig-side">
+          <svg class="fig-svg" data-role="curve" role="img" aria-label="Both normalisers as a function of the frame angle."></svg>
+          <dl class="readout" data-role="readout"></dl>
+        </div>
+      </div>
+      <div class="fig-controls">
+        <label class="ctl ctl-range">Frame angle <output data-out="theta">0°</output>
+          <input type="range" min="0" max="360" step="0.5" value="0" data-ctl="theta" />
+        </label>
+        <button type="button" class="btn" data-ctl="play">Rotate</button>
+      </div>
+      <figcaption><span class="fig-n">Figure 3.</span> The stencil vectors of the point that sets the global scale on the biased sphere cloud. The rectangle’s sides are the per-axis sums used upstream <span class="swatch drift"></span>; its diagonal is that point’s upstream scale. The invariant sum <span class="swatch stable"></span> is the total length of the arrows, drawn as the circle. The curve’s vertical axis is zoomed: the upstream value swings by a few percent.</figcaption>
+    </figure>
+
+    <section aria-labelledby="s5">
+      <h2 id="s5">The whole cloud, live</h2>
+      <p>The audit’s test is blunt. Keep the points, normals, neighbours and signal fixed. Give every point an independent random rotation of its tangent frame. Recompute the normalised gradient and measure how far it moved. A basis-independent operator should not move at all.</p>
+      <p>Below, both clouds receive exactly the random angles the Python audit used. The slider scales them from 0 to the full audit rotation. Every number is computed in your browser, and at the end of the slider it matches the recorded measurement. Notice that the upstream colour is nearly uniform: most of its drift comes from the single global scale, which shifts every arrow at once.</p>
+    </section>
+
+    <figure class="fig full" id="fig-gauge">
+      <div class="gauge-grid">
+        <div class="gauge-col">
+          <div class="gauge-head">
+            <select data-ctl="left" aria-label="Method shown on the left"></select>
+            <output data-out="left">—</output>
+          </div>
+          <div class="fig-stage"><canvas class="three" aria-label="Point cloud coloured by how much each gradient moved."></canvas></div>
+        </div>
+        <div class="gauge-col">
+          <div class="gauge-head">
+            <select data-ctl="right" aria-label="Method shown on the right"></select>
+            <output data-out="right">—</output>
+          </div>
+          <div class="fig-stage"><canvas class="three" aria-label="Point cloud coloured by how much each gradient moved."></canvas></div>
+        </div>
+      </div>
+      <div class="fig-controls">
+        <label class="ctl">Cloud
+          <select data-ctl="example"></select>
+        </label>
+        <label class="ctl ctl-range">Frame rotation <output data-out="t">0 %</output>
+          <input type="range" min="0" max="1" step="0.01" value="0" data-ctl="t" />
+        </label>
+        <button type="button" class="btn" data-ctl="play">Spin all frames</button>
+        <div class="legend" data-role="legend"></div>
+      </div>
+      <figcaption><span class="fig-n">Figure 4.</span> Relative change of the normalised gradient after rotating every tangent frame, per point (colour) and over the cloud (number). Both views orbit together. <span data-role="match"></span></figcaption>
+    </figure>
+
+    <section aria-labelledby="s6">
+      <h2 id="s6">Across 288 measurements</h2>
+      <p>The protocol was fixed before running. Two analytic surfaces, a unit sphere and the saddle <span class="m">z = 0.3(x^2 - y^2)</span>. Uniform or 90/10 biased sampling. Three noise levels, three seeds, exact or PCA normals. That gives 72 conditions, each run through four methods that change one thing at a time.</p>
+      <div class="methods-table" role="table" aria-label="The four methods">
+        <div role="row" class="mt-head"><span role="columnheader">Method</span><span role="columnheader">Penalty</span><span role="columnheader">Normaliser</span><span role="columnheader">Gaussian width</span></div>
+        <div role="row"><span role="cell"><b class="mtag drift">A</b> upstream</span><span role="cell">λI</span><span role="cell">per-axis L1</span><span role="cell">global</span></div>
+        <div role="row"><span role="cell"><b class="mtag drift">B</b> tensor penalty</span><span role="cell">Frobenius</span><span role="cell">per-axis L1</span><span role="cell">global</span></div>
+        <div role="row"><span role="cell"><b class="mtag stable">C</b> invariant</span><span role="cell">Frobenius</span><span role="cell">sum of lengths</span><span role="cell">global</span></div>
+        <div role="row"><span role="cell"><b class="mtag stable">D</b> local width</span><span role="cell">Frobenius</span><span role="cell">sum of lengths</span><span role="cell">per point</span></div>
+      </div>
+      <p>A to B isolates the penalty, B to C the normaliser, C to D a density-aware Gaussian width. Each dot below is one condition. Hover one to follow the same condition through all four methods.</p>
+    </section>
+
+    <figure class="fig wide" id="fig-results">
+      <div class="fig-controls top">
+        <div class="ctl">Measure
+          <div class="seg" data-ctl="metric">
+            <button type="button" data-value="gauge_normalized_relative_l2" aria-pressed="true">drift, normalised</button>
+            <button type="button" data-value="gauge_raw_relative_l2" aria-pressed="false">drift, raw</button>
+            <button type="button" data-value="gradient_relative_l2" aria-pressed="false">error vs exact</button>
+          </div>
+        </div>
+        <label class="ctl">Surface <select data-filter="shape"><option value="">both</option><option value="sphere">sphere</option><option value="saddle">saddle</option></select></label>
+        <label class="ctl">Sampling <select data-filter="density"><option value="">both</option><option value="uniform">uniform</option><option value="biased">biased 90/10</option></select></label>
+        <label class="ctl">Noise σ <select data-filter="sigma"><option value="">all</option><option value="0">0</option><option value="0.005">0.005</option><option value="0.02">0.02</option></select></label>
+        <label class="ctl">Normals <select data-filter="normal_source"><option value="">both</option><option value="exact">exact</option><option value="pca">PCA</option></select></label>
+      </div>
+      <div class="fig-stage chart"><svg class="fig-svg" data-role="chart" role="img" aria-label="Strip plot of the selected measure for the four methods."></svg>
+        <div class="tip" data-role="tip" hidden></div>
+      </div>
+      <figcaption><span class="fig-n">Figure 5.</span> <span data-role="caption"></span></figcaption>
+    </figure>
+
+    <section aria-labelledby="s7">
+      <table class="summary">
+        <caption>Means over the 72 conditions, from <a href="files/results.json">results.json</a>.</caption>
+        <thead><tr><th scope="col">Method</th><th scope="col">Error vs exact gradient</th><th scope="col">Drift, normalised, mean</th><th scope="col">Drift, normalised, max</th></tr></thead>
+        <tbody data-role="summary"></tbody>
+      </table>
+      <p>The penalty alone (B) removes the drift of the raw gradient, but the upstream normaliser keeps the normalised one moving. C removes both. Accuracy against the exact gradient barely moves, and is in fact very slightly worse on average: 16.39 % against 16.33 %. <strong>This is an invariance fix, not an accuracy gain.</strong></p>
+      <p>The local width of D lowers the error on the deliberately sparse halves of the clouds, from 18.77 % to 17.14 %, while raising it overall. That average mixes uniform and biased clouds, so filter Figure 5 to <em>biased 90/10</em> before drawing conclusions about undersampled regions. D stays an exploratory ablation.</p>
+    </section>
+
+    <section aria-labelledby="s8">
+      <h2 id="s8">What this does not show</h2>
+      <ul class="limits">
+        <li><strong>No trained network was run.</strong> The audit transcribes the gradient formulas of the official code to NumPy. Classification accuracy, learned robustness and GPU speed were not measured.</li>
+        <li><strong>The PyTorch parity check is pending.</strong> <code>scripts/check_upstream.py</code> compares against the official implementation, but needs PyTorch and PyG, which were not installed in the audit environment.</li>
+        <li><strong>The conditions are not 72 independent objects.</strong> They are controlled variations of two analytic surfaces, so no statistical significance across shapes is claimed.</li>
+        <li><strong>Tangent-basis independence is not rotation invariance.</strong> The official model feeds raw <span class="m">xyz</span> positions as features, and those change when the object turns. This audit says nothing about that.</li>
+        <li><strong>A checkpoint trained with one normaliser will not improve by swapping in another.</strong> The two scales differ, so the fix would need retraining to be evaluated as a network change.</li>
+      </ul>
+    </section>
+
+    <section aria-labelledby="reproduce" class="reproduce">
+      <h2 id="reproduce">Reproduce it</h2>
+      <p>The CPU audit needs only NumPy and runs in about nine seconds. Every figure on this page reads its inputs from the same run.</p>
+<pre><code>python -m pip install -r requirements.txt
+python -m pytest tests -q
+python -m deltaconv_audit.experiment --output results/runs/my-audit --points 512 --seeds 0 1 2</code></pre>
+      <ul class="files">
+        <li><a href="files/01_operator_audit.ipynb" download>01_operator_audit.ipynb</a><span>Read the results and rerun the audit, locally or on Colab.</span></li>
+        <li><a href="files/02_official_replication.ipynb" download>02_official_replication.ipynb</a><span>Isolated install of the official code, parity check, ModelNet40 baseline. Not yet run.</span></li>
+        <li><a href="files/results.json">results.json</a><span>All 288 rows, configuration, environment and source hashes.</span></li>
+        <li><a href="files/metrics.csv" download>metrics.csv</a><span>The same measurements as a table.</span></li>
+        <li><a href="files/research_note_fr.md">Research note (French)</a><span>Protocol, derivation, metrics and limits.</span></li>
+        <li><a href="files/presentation_notes_fr.pdf">Presentation notes (French)</a><span>Speaker notes from the original DeltaConv presentation.</span></li>
+      </ul>
+      <p class="small">Upstream code: <a href="https://github.com/rubenwiersma/deltaconv/tree/186fec369fa2ceb4559830bc421282dddb2300a2">rubenwiersma/deltaconv</a>, pinned at commit <code>186fec3</code>, MIT licence (<a href="files/THIRD_PARTY_NOTICES.md">notices</a>). DeltaConv, its architecture and its operators are the work of Wiersma, Nasikun, Eisemann and Hildebrandt. The contribution here is the audit, two explicit numerical changes and their ablations.</p>
+    </section>
+
+    <section class="refs" aria-labelledby="refs-h">
+      <h2 id="refs-h">References</h2>
+      <ol>
+        <li id="ref-deltaconv">Ruben Wiersma, Ahmad Nasikun, Elmar Eisemann, Klaus Hildebrandt. <a href="https://doi.org/10.1145/3528223.3530166">DeltaConv: Anisotropic Operators for Geometric Deep Learning on Point Clouds</a>. ACM Transactions on Graphics 41(4), SIGGRAPH 2022. <a href="https://arxiv.org/abs/2111.08799">arXiv:2111.08799</a>.</li>
+      </ol>
+      <h3>Cite this audit</h3>
+<pre class="bib"><code>@misc{arifette2026deltaconvaudit,
+  author = {Arifette, Nassim},
+  title  = {Spin the Frames, Keep the Gradient: a numerical audit of
+            basis independence in DeltaConv's MLS gradient},
+  year   = {2026},
+  note   = {Master MVA project}
+}</code></pre>
+    </section>
+  </main>
+
+  <footer class="foot">
+    <p>Figures are computed in the browser with a TypeScript port of the audit code, tested against the NumPy reference on all four saved clouds.</p>
+  </footer>
+
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

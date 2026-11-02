@@ -1,0 +1,4 @@
+numpy>=1.24,<3
+pytest>=7,<10
+nbformat>=5,<6
+

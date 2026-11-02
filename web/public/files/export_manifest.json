@@ -1,0 +1,13 @@
+{
+  "schema_version": 2,
+  "source": "results/cpu_reference",
+  "sha256": {
+    "files/01_operator_audit.ipynb": "236489a49905fe19623ca958541b762b764fc07a1cb84e1856fe9214f1a838be",
+    "files/02_official_replication.ipynb": "cbdf0e3e62c65587359ed64c52424373eb008c9f75b4ac04ad973d4550f56e6c",
+    "files/metrics.csv": "7f38fb4117ad5a4967bb09fb22c5187b61f0a359a42b7b4a0cbba1f0ad21fa27",
+    "files/presentation_notes_fr.pdf": "200ed9cfabfc6dc9f66444fe47d39bdf8e8b78ca69b67e4202330d3aa693b920",
+    "files/research_note_fr.md": "40ff54a270e289ca149ff080889af59c7a55d98a595bfce7a8269e6ec3233434",
+    "files/results.json": "ed2ab28220135dd824d9701d5b56b8d461c61ad01db667918d5e01f4e1e1e170",
+    "files/THIRD_PARTY_NOTICES.md": "c89428623ae62128ff27a2429eba442f9df1c8dc134316d47bf8b9ff04a873e5"
+  }
+}
