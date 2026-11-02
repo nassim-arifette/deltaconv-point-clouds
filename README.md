@@ -1,22 +1,22 @@
 # Spin the frames, keep the gradient
 
-**A numerical audit of basis independence in DeltaConv's moving-least-squares gradient.**
+A numerical audit of basis independence in DeltaConv's moving-least-squares gradient.
 
 [**Open the interactive article →**](https://nassim-arifette.github.io/deltaconv-point-clouds/)
 
 [![The website's hero: a sphere of points whose tangent frames keep spinning while the gradient arrows stay still](docs/assets/site-hero.png)](https://nassim-arifette.github.io/deltaconv-point-clouds/)
 
-[DeltaConv](https://doi.org/10.1145/3528223.3530166) (Wiersma et al., SIGGRAPH 2022) learns on point clouds with gradients that live in each point's tangent plane. Its result should not depend on which tangent basis is picked at each point. This project checks whether the discrete implementation keeps that promise.
+[DeltaConv](https://doi.org/10.1145/3528223.3530166) (Wiersma et al., SIGGRAPH 2022) learns on point clouds with gradients that live in each point's tangent plane. In theory, the result should not depend on which tangent basis is picked at each point. I wanted to know whether the discrete implementation actually holds to that.
 
-## The finding in three lines
+## The short version
 
-- Two numerical choices in the official MLS gradient (the ridge penalty and the gradient normaliser) quietly bring the basis back. Rotating every tangent frame moves the normalised gradient by **2.08 % on average and up to 10.2 %**, over 72 synthetic conditions.
-- Two small changes (a Frobenius penalty and a rotation-invariant normaliser) bring that drift down to **about 10⁻¹⁵**, which is floating-point noise.
-- They do **not** make the gradient more accurate (16.39 % against 16.33 % error), and no trained network was evaluated.
+- Not quite. Two numerical choices in the official MLS gradient, the ridge penalty and the gradient normaliser, quietly bring the basis back. Over 72 synthetic conditions, rotating every tangent frame moves the normalised gradient by 2.08 % on average and by up to 10.2 %.
+- A Frobenius penalty and a rotation-invariant normaliser bring that drift down to about 10⁻¹⁵, which is floating-point noise.
+- These changes do not make the gradient more accurate (16.39 % against 16.33 % error). No trained network was evaluated.
 
 ## What you can do on the site
 
-Every figure runs a TypeScript port of the audit's MLS gradient in your browser. It is tested against the NumPy reference on all four saved clouds, gradients included, to within 10⁻¹¹.
+The figures run a TypeScript port of the audit's MLS gradient in your browser. The port is tested against the NumPy reference on all four saved clouds, gradients included, to within 10⁻¹¹.
 
 | Figure | Try this |
 | --- | --- |
@@ -30,7 +30,7 @@ Every figure runs a TypeScript port of the audit's MLS gradient in your browser.
 
 ## Reproduce the audit
 
-Only NumPy is needed. A full run takes about nine seconds on a laptop CPU.
+You only need NumPy. A full run takes about nine seconds on a laptop CPU.
 
 ```bash
 python -m pip install -r requirements.txt
@@ -38,7 +38,7 @@ python -m pytest tests -q
 python -m deltaconv_audit.experiment --output results/runs/my-audit --points 512 --seeds 0 1 2
 ```
 
-Or open [`notebooks/01_operator_audit.ipynb`](notebooks/01_operator_audit.ipynb) locally or on Colab.
+You can also open [`notebooks/01_operator_audit.ipynb`](notebooks/01_operator_audit.ipynb) locally or on Colab.
 
 | File | What it contains |
 | --- | --- |
@@ -49,10 +49,10 @@ Or open [`notebooks/01_operator_audit.ipynb`](notebooks/01_operator_audit.ipynb)
 
 ## What this does not show
 
-- **No trained network was run.** The audit transcribes the gradient formulas of the official code to NumPy; classification accuracy, learned robustness and GPU speed were not measured.
-- **The PyTorch parity check is pending.** [`scripts/check_upstream.py`](scripts/check_upstream.py) needs PyTorch and PyG.
-- **The 72 conditions are controlled variations of two analytic surfaces**, not 72 independent objects.
-- **Tangent-basis independence is not rotation invariance** of a classifier fed raw `xyz` positions.
+- No trained network was run. The audit transcribes the gradient formulas of the official code to NumPy, so classification accuracy, learned robustness and GPU speed were not measured.
+- The PyTorch parity check is still pending: [`scripts/check_upstream.py`](scripts/check_upstream.py) needs PyTorch and PyG.
+- The 72 conditions are controlled variations of two analytic surfaces, not 72 independent objects.
+- Tangent-basis independence is a different property from the rotation invariance of a classifier fed raw `xyz` positions.
 
 ## Repository layout
 
@@ -64,10 +64,10 @@ Or open [`notebooks/01_operator_audit.ipynb`](notebooks/01_operator_audit.ipynb)
 | `web/` | Source of the website (Vite + TypeScript, Three.js, D3, KaTeX). See [`docs/SITE.md`](docs/SITE.md) |
 | `tools/` | Data export for the site, notebook generation, link checks |
 
-To work on the site: `cd web && npm ci && npm run dev`. GitHub Actions tests, builds and publishes it on every push to `main`.
+To work on the site, run `cd web && npm ci && npm run dev`. On every push to `main`, GitHub Actions tests the site, builds it and publishes it.
 
 ## Credits
 
-DeltaConv, its architecture and its operators are the work of Ruben Wiersma, Ahmad Nasikun, Elmar Eisemann and Klaus Hildebrandt. The baseline transcribes [`grad_div_mls.py`](https://github.com/rubenwiersma/deltaconv/blob/186fec369fa2ceb4559830bc421282dddb2300a2/deltaconv/geometry/grad_div_mls.py) at commit `186fec3` (MIT, see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)). This repository contributes the audit, two explicit numerical changes and their ablations.
+DeltaConv, its architecture and its operators are the work of Ruben Wiersma, Ahmad Nasikun, Elmar Eisemann and Klaus Hildebrandt. The baseline transcribes [`grad_div_mls.py`](https://github.com/rubenwiersma/deltaconv/blob/186fec369fa2ceb4559830bc421282dddb2300a2/deltaconv/geometry/grad_div_mls.py) at commit `186fec3` (MIT, see [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)). What this repository adds is the audit, two explicit numerical changes and their ablations.
 
 Nassim Arifette, PhD student at École polytechnique. Master MVA project, ENS Paris-Saclay.

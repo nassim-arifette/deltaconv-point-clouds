@@ -57,13 +57,13 @@
     <section class="tldr" aria-labelledby="tldr-h">
       <h2 id="tldr-h">In short</h2>
       <p>DeltaConv learns on point clouds with gradients that live in each point’s tangent plane. Its authors argue the result does not depend on which tangent basis you pick at each point, and the continuous maths agrees.</p>
-      <p>The discrete implementation makes two numerical choices, a ridge penalty and a gradient normaliser, that each quietly reintroduce the basis. Rotating every tangent frame moves the normalised gradient by <strong>2.08 % on average</strong>, and by up to <strong>10.2 %</strong>, over 72 synthetic conditions.</p>
-      <p>Two small changes bring that drift down to <strong>10<sup>−15</sup></strong>, which is floating-point noise. They do not make the gradient more accurate, and nothing on this page measures a trained network.</p>
+      <p>The discrete implementation makes two numerical choices, a ridge penalty and a gradient normaliser, that each quietly reintroduce the basis. Rotating every tangent frame moves the normalised gradient by <strong>2.08 % on average</strong> over 72 synthetic conditions, and by up to 10.2 % in the worst one.</p>
+      <p>Two small changes bring that drift down to <strong>10<sup>−15</sup></strong>, which is floating-point noise. They do not make the gradient more accurate. Nothing on this page measures a trained network either.</p>
     </section>
 
     <section aria-labelledby="s1">
       <h2 id="s1">Directions on a surface need a frame</h2>
-      <p>DeltaConv <a class="cite" href="#ref-deltaconv">[1]</a> runs two streams of features side by side. A scalar stream stores one number per point and channel. A vector stream stores a direction per point and channel, and the network moves between them with geometric operators: gradient, divergence, curl. That is how it captures anisotropic patterns, like an edge or a ridge, without leaving the point cloud.</p>
+      <p>DeltaConv <a class="cite" href="#ref-deltaconv">[1]</a> runs two streams of features side by side. A scalar stream stores one number per point and channel. A vector stream stores a direction per point and channel, and the network moves between them with geometric operators: gradient, divergence, curl. This lets it pick up anisotropic patterns, like an edge or a ridge, while working directly on the point cloud.</p>
       <p>A direction in the tangent plane is stored as two numbers. Two numbers only mean something relative to a pair of axes, a <em>tangent basis</em> <span class="m">(u, v)</span>, and on a point cloud nothing singles out one basis over another. The implementation picks one per point by a fixed rule. Any rotation of those axes would have been just as legitimate.</p>
       <aside class="note">Coordinate independence is section 3.7 of the paper. Rotating the axes by θ should rotate the two coefficients by −θ and leave the actual 3D arrow unchanged.</aside>
       <p>The first quantity DeltaConv needs is the gradient of a scalar field. Below is the one used throughout this audit, <span class="m">f(x,y,z)=\sin 2x + yz/4</span>, sampled on 512 points. The arrows are estimated by the method described next; switch to the exact gradient to compare.</p>
@@ -100,7 +100,7 @@
       <div class="mb">f(u,v) \approx c_0 + g_u\,u + g_v\,v + a\,u^2 + b\,uv + c\,v^2</div>
       <p>The linear coefficients <span class="m">(g_u, g_v)</span> are the gradient in that frame. The fit minimises a Gaussian-weighted squared error. On thin or lopsided neighbourhoods the problem is badly conditioned, so the paper adds a small ridge term <a class="cite" href="#ref-deltaconv">[1, §3.2]</a>:</p>
       <div class="mb">\min_{\theta}\; \sum_j w_j\,\big(f_j - B_j\theta\big)^2 + \lambda\,\theta^{\top} P\,\theta, \qquad \lambda = 10^{-3},\; P = I</div>
-      <p>The gradient is then rescaled by a single global number so that features stay in a reasonable range from one layer to the next. Both steps are sensible. Both, as it turns out, look at the coordinates.</p>
+      <p>The gradient is then rescaled by a single global number so that features stay in a reasonable range from one layer to the next. Both steps make sense. The catch is that each of them looks at the coordinates.</p>
     </section>
 
     <section aria-labelledby="s3">
@@ -125,7 +125,7 @@
         <button type="button" class="btn" data-ctl="play">Rotate</button>
         <button type="button" class="btn ghost" data-ctl="next">Another point</button>
       </div>
-      <figcaption><span class="fig-n">Figure 2.</span> Twenty real neighbours of one point of the saddle cloud, in its tangent plane. The quadratic is fitted without ridge, so its shape is fixed; only the axes turn. The upstream penalty <span class="swatch drift"></span> wobbles with the angle, the tensor penalty <span class="swatch stable"></span> does not.</figcaption>
+      <figcaption><span class="fig-n">Figure 2.</span> Twenty real neighbours of one point of the saddle cloud, in its tangent plane. The quadratic is fitted without ridge, so its shape is fixed; only the axes turn. The upstream penalty <span class="swatch drift"></span> wobbles with the angle; the tensor penalty <span class="swatch stable"></span> stays flat.</figcaption>
     </figure>
 
     <section aria-labelledby="s3b">
@@ -159,8 +159,8 @@
 
     <section aria-labelledby="s5">
       <h2 id="s5">The whole cloud, live</h2>
-      <p>The audit’s test is blunt. Keep the points, normals, neighbours and signal fixed. Give every point an independent random rotation of its tangent frame. Recompute the normalised gradient and measure how far it moved. A basis-independent operator should not move at all.</p>
-      <p>Below, both clouds receive exactly the random angles the Python audit used. The slider scales them from 0 to the full audit rotation. Every number is computed in your browser, and at the end of the slider it matches the recorded measurement. Notice that the upstream colour is nearly uniform: most of its drift comes from the single global scale, which shifts every arrow at once.</p>
+      <p>The audit’s test is blunt. Points, normals, neighbours and signal stay fixed, and every point gets an independent random rotation of its tangent frame. Then I recompute the normalised gradient and measure how far it moved. A basis-independent operator should not move at all.</p>
+      <p>Below, both clouds receive exactly the random angles the Python audit used. The slider scales them from 0 to the full audit rotation. The numbers are computed in your browser, and at the end of the slider they match the recorded measurement. The upstream colour is nearly uniform because most of its drift comes from the single global scale, which shifts every arrow at once.</p>
     </section>
 
     <figure class="fig full" id="fig-gauge">
@@ -195,7 +195,7 @@
 
     <section aria-labelledby="s6">
       <h2 id="s6">Across 288 measurements</h2>
-      <p>The protocol was fixed before running. Two analytic surfaces, a unit sphere and the saddle <span class="m">z = 0.3(x^2 - y^2)</span>. Uniform or 90/10 biased sampling. Three noise levels, three seeds, exact or PCA normals. That gives 72 conditions, each run through four methods that change one thing at a time.</p>
+      <p>I fixed the protocol before running anything. There are two analytic surfaces, a unit sphere and the saddle <span class="m">z = 0.3(x^2 - y^2)</span>. Sampling is uniform or 90/10 biased, with three noise levels, three seeds, and exact or PCA normals. That makes 72 conditions, and each one goes through four methods that change one thing at a time.</p>
       <div class="methods-table" role="table" aria-label="The four methods">
         <div role="row" class="mt-head"><span role="columnheader">Method</span><span role="columnheader">Penalty</span><span role="columnheader">Normaliser</span><span role="columnheader">Gaussian width</span></div>
         <div role="row"><span role="cell"><b class="mtag drift">A</b> upstream</span><span role="cell">λI</span><span role="cell">per-axis L1</span><span role="cell">global</span></div>
@@ -203,7 +203,7 @@
         <div role="row"><span role="cell"><b class="mtag stable">C</b> invariant</span><span role="cell">Frobenius</span><span role="cell">sum of lengths</span><span role="cell">global</span></div>
         <div role="row"><span role="cell"><b class="mtag stable">D</b> local width</span><span role="cell">Frobenius</span><span role="cell">sum of lengths</span><span role="cell">per point</span></div>
       </div>
-      <p>A to B isolates the penalty, B to C the normaliser, C to D a density-aware Gaussian width. Each dot below is one condition. Hover one to follow the same condition through all four methods.</p>
+      <p>A to B isolates the penalty, B to C the normaliser, C to D a density-aware Gaussian width. Each dot below is one condition; hover over one to follow the same condition through all four methods.</p>
     </section>
 
     <figure class="fig wide" id="fig-results">
@@ -232,24 +232,24 @@
         <thead><tr><th scope="col">Method</th><th scope="col">Error vs exact gradient</th><th scope="col">Drift, normalised, mean</th><th scope="col">Drift, normalised, max</th></tr></thead>
         <tbody data-role="summary"></tbody>
       </table>
-      <p>The penalty alone (B) removes the drift of the raw gradient, but the upstream normaliser keeps the normalised one moving. C removes both. Accuracy against the exact gradient barely moves, and is in fact very slightly worse on average: 16.39 % against 16.33 %. <strong>This is an invariance fix, not an accuracy gain.</strong></p>
-      <p>The local width of D lowers the error on the deliberately sparse halves of the clouds, from 18.77 % to 17.14 %, while raising it overall. That average mixes uniform and biased clouds, so filter Figure 5 to <em>biased 90/10</em> before drawing conclusions about undersampled regions. D stays an exploratory ablation.</p>
+      <p>The penalty alone (B) removes the drift of the raw gradient, but the upstream normaliser keeps the normalised one moving. C removes both. Accuracy against the exact gradient barely changes, and on average it is very slightly worse: 16.39 % against 16.33 %. <strong>The fix buys invariance. It does not improve accuracy.</strong></p>
+      <p>The local width of D lowers the error on the deliberately sparse halves of the clouds, from 18.77 % to 17.14 %, while raising it overall. That average mixes uniform and biased clouds, so filter Figure 5 to <em>biased 90/10</em> before drawing conclusions about undersampled regions. I treat D as an exploratory ablation.</p>
     </section>
 
     <section aria-labelledby="s8">
       <h2 id="s8">What this does not show</h2>
       <ul class="limits">
-        <li><strong>No trained network was run.</strong> The audit transcribes the gradient formulas of the official code to NumPy. Classification accuracy, learned robustness and GPU speed were not measured.</li>
-        <li><strong>The PyTorch parity check is pending.</strong> <code>scripts/check_upstream.py</code> compares against the official implementation, but needs PyTorch and PyG, which were not installed in the audit environment.</li>
-        <li><strong>The conditions are not 72 independent objects.</strong> They are controlled variations of two analytic surfaces, so no statistical significance across shapes is claimed.</li>
-        <li><strong>Tangent-basis independence is not rotation invariance.</strong> The official model feeds raw <span class="m">xyz</span> positions as features, and those change when the object turns. This audit says nothing about that.</li>
-        <li><strong>A checkpoint trained with one normaliser will not improve by swapping in another.</strong> The two scales differ, so the fix would need retraining to be evaluated as a network change.</li>
+        <li>No trained network was run. The audit transcribes the gradient formulas of the official code to NumPy. Classification accuracy, learned robustness and GPU speed were not measured.</li>
+        <li>The PyTorch parity check is still pending. <code>scripts/check_upstream.py</code> compares against the official implementation, but it needs PyTorch and PyG, and neither was installed in the audit environment.</li>
+        <li>The 72 conditions are controlled variations of two analytic surfaces, not 72 independent objects, so I make no claim of statistical significance across shapes.</li>
+        <li>Tangent-basis independence is a different property from rotation invariance. The official model feeds raw <span class="m">xyz</span> positions as features, and those change when the object turns. This audit says nothing about that.</li>
+        <li>Swapping the normaliser in a checkpoint trained with the other one will not improve it. The two scales differ, so evaluating the fix as a network change would need retraining.</li>
       </ul>
     </section>
 
     <section aria-labelledby="reproduce" class="reproduce">
       <h2 id="reproduce">Reproduce it</h2>
-      <p>The CPU audit needs only NumPy and runs in about nine seconds. Every figure on this page reads its inputs from the same run.</p>
+      <p>The CPU audit needs only NumPy and runs in about nine seconds. All the figures on this page read their inputs from that same run.</p>
 <pre><code>python -m pip install -r requirements.txt
 python -m pytest tests -q
 python -m deltaconv_audit.experiment --output results/runs/my-audit --points 512 --seeds 0 1 2</code></pre>
@@ -261,7 +261,7 @@ python -m deltaconv_audit.experiment --output results/runs/my-audit --points 512
         <li><a href="files/research_note_fr.md">Research note (French)</a><span>Protocol, derivation, metrics and limits.</span></li>
         <li><a href="files/presentation_notes_fr.pdf">Presentation notes (French)</a><span>Speaker notes from the original DeltaConv presentation.</span></li>
       </ul>
-      <p class="small">Upstream code: <a href="https://github.com/rubenwiersma/deltaconv/tree/186fec369fa2ceb4559830bc421282dddb2300a2">rubenwiersma/deltaconv</a>, pinned at commit <code>186fec3</code>, MIT licence (<a href="files/THIRD_PARTY_NOTICES.md">notices</a>). DeltaConv, its architecture and its operators are the work of Wiersma, Nasikun, Eisemann and Hildebrandt. The contribution here is the audit, two explicit numerical changes and their ablations.</p>
+      <p class="small">Upstream code: <a href="https://github.com/rubenwiersma/deltaconv/tree/186fec369fa2ceb4559830bc421282dddb2300a2">rubenwiersma/deltaconv</a>, pinned at commit <code>186fec3</code>, MIT licence (<a href="files/THIRD_PARTY_NOTICES.md">notices</a>). DeltaConv, its architecture and its operators are the work of Wiersma, Nasikun, Eisemann and Hildebrandt. My contribution is the audit, two explicit numerical changes and their ablations.</p>
     </section>
 
     <section class="refs" aria-labelledby="refs-h">
